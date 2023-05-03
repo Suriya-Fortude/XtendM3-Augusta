@@ -302,13 +302,13 @@ class EXT001 extends ExtendM3Batch {
 
       if(!invalidItem&&!PHCrownProdcutGroup)
       {
-          for (int i = 0; i < warehouses.length; i++) //Iterate through all available warehouses.
-          {
-            warehouse = warehouses[i]
-            availableToPromiseRecordsFound = false
-            filterItemsAndUploadQuantity(warehouse,itemNumber)
-            filterItemsAndUploadDate(warehouse,itemNumber,planningTimeFence)
-          }
+        for (int i = 0; i < warehouses.length; i++) //Iterate through all available warehouses.
+        {
+          warehouse = warehouses[i]
+          availableToPromiseRecordsFound = false
+          filterItemsAndUploadQuantity(warehouse,itemNumber)
+          filterItemsAndUploadDate(warehouse,itemNumber,planningTimeFence)
+        }
       }
       if(ATPQty180>0)
       {
@@ -549,7 +549,7 @@ class EXT001 extends ExtendM3Batch {
         availableToPromiseRecordsFound = false
       }
 
-    //  addItemsToATPDateTable(itemNumber,warehouse,quantity,planningDate+"")
+      //  addItemsToATPDateTable(itemNumber,warehouse,quantity,planningDate+"")
 
 
   }
