@@ -40,12 +40,9 @@ class EXT001 extends ExtendM3Batch {
     divi = program.LDAZD.DIVI
     deleteCustomTableData()
     getTranslationValues()
-    logger.info("Suriya phCrownProductGroup: " + phCrownProductGroup)
-    logger.info("Suriya validAccessControlObjects: " + validAccessControlObjects)
-    logger.info("Suriya warehouseForACO: " + warehouseForACO)
     if (allTranslationsAvailable) {
       getItems()
-      setUpdateLoadFlag()
+      //setUpdateLoadFlag()
       logger.error("Total Item Size: " + exportItemList.size())
     } else {
       logger.error("ATP Inventory upload aborted due to missing translation values in CRS881")
@@ -57,7 +54,7 @@ class EXT001 extends ExtendM3Batch {
    * @params
    * @return void
    */
-  def getTranslationValues() {
+  private void getTranslationValues() {
 
     //Get PH Crown Product group list.
     def params = ["CONO": cono.toString().trim(), "DIVI": "", "TRQF": "0", "MSTD": "ECOM", "MVRS": "1", "BMSG": "ECOM ATP", "IBOB": "O", "ELMP": "ECOM ATP", "ELMD": "ECOM ATP", "MVXD": "PHCN"]
@@ -66,10 +63,6 @@ class EXT001 extends ExtendM3Batch {
         String > response ->
         if (response.MBMD != null) {
           phCrownProductGroup = new ArrayList < > (Arrays.asList(response.MBMD.split(",")))
-          for (int i = 0; i < phCrownProductGroup.size(); i++) {
-            //Get Invalid Access control object for each product group.
-            getInvalidACOforProductGroup(phCrownProductGroup.get(i))
-          }
         } else {
           allTranslationsAvailable = false
           logger.error("PH Crown Product Groups not defined in CRS881. Please configure the same.")
@@ -118,8 +111,7 @@ class EXT001 extends ExtendM3Batch {
           Map < String,
             String > response ->
             if (response.MBMD != null) {
-              String list = response.MBMD
-              warehouseForACO.put(ACO.trim(), list.trim())
+              warehouseForACO.put(ACO.trim(), response.MBMD.trim())
             } else {
               allTranslationsAvailable = false
               logger.error("Valid warehouse not defined for ACO: " + ACO + ". Please configure the same in CRS881")
@@ -138,13 +130,14 @@ class EXT001 extends ExtendM3Batch {
         if (response.MBMD != null) {
           lowerStatus = response.MBMD
         } else {
+          allTranslationsAvailable = false
           logger.error("Valid lower Status not defined in CRS881. Please configure the same.")
           return
         }
     }
     miCaller.call("CRS881MI", "GetTranslData", params, callback)
 
-    //Get lower status value applicable for records in MITMAS and MITBAL
+    //Get higher status value applicable for records in MITMAS and MITBAL
     params = ["CONO": cono.toString().trim(), "DIVI": "", "TRQF": "0", "MSTD": "ECOM", "MVRS": "1", "BMSG": "ECOM ATP", "IBOB": "O", "ELMP": "ECOM ATP", "ELMD": "ECOM ATP", "MVXD": "STAH"]
     callback = {
       Map < String,
@@ -152,6 +145,7 @@ class EXT001 extends ExtendM3Batch {
         if (response.MBMD != null) {
           higherStatus = response.MBMD
         } else {
+          allTranslationsAvailable = false
           logger.error("Valid higher Status not defined in CRS881. Please configure the same.")
           return
         }
@@ -164,16 +158,15 @@ class EXT001 extends ExtendM3Batch {
    * @params
    * @return void
    */
-  def deleteCustomTableData() {
-    logger.info("Delet Custom table data function triggered.")
-    //List all records from EXTPQT Table
+  private void deleteCustomTableData() {
+    //List all records from EXTPDT Table
     def params = ["CONO": cono.toString().trim()]
     def callback = {
       Map < String,
         String > response ->
         DBAction query = database.table("EXTPDT").index("00").build()
         DBContainer container = query.getContainer()
-        container.set("EXcono", cono)
+        container.set("EXCONO", cono)
         container.set("EXWHLO", response.WHLO)
         container.set("EXITNO", response.ITNO)
         if (query.read(container)) {
@@ -182,14 +175,14 @@ class EXT001 extends ExtendM3Batch {
     }
     miCaller.call("EXT200MI", "LstATPDate", params, callback)
 
-    //List all records from EXTPDT Table
+    //List all records from EXTPQT Table
     params = ["CONO": cono.toString().trim()]
     callback = {
       Map < String,
         String > response ->
         DBAction query = database.table("EXTPQT").index("00").build()
         DBContainer container = query.getContainer()
-        container.set("EXcono", cono)
+        container.set("EXCONO", cono)
         container.set("EXWHLO", response.WHLO)
         container.set("EXITNO", response.ITNO)
         if (query.read(container)) {
@@ -200,21 +193,34 @@ class EXT001 extends ExtendM3Batch {
   }
 
   /**
-   * Get invalid access control objects for the product group.
-   * @params ITCL
-   * @return
+   * check if access control object invalid for the product group
+   * @params Product group, access control object
+   * @return boolean
    */
-  def getInvalidACOforProductGroup(String ITCL) {
-    if (ITCL == null || ITCL.trim().isEmpty()) ITCL = ""
+  private boolean checkIfACOInvalidForProductGroup(String ITCL,String ACO) {
+
+    if (ITCL == null || ITCL.trim().isEmpty()) ITCL = ''
+    if (ACO == null || ACO.trim().isEmpty()) ACO = ''
+
+    boolean invalidACO = false
+
     def params = ["CONO": cono.toString().trim(), "DIVI": "", "TRQF": "0", "MSTD": "ECOM", "MVRS": "1", "BMSG": "ECOM ATP", "IBOB": "O", "ELMP": "ECOM ATP", "ELMD": "ECOM ATP", "MVXD": "INVACO_" + ITCL.trim()]
     def callback = {
       Map < String,
         String > response ->
-        if (response.MBMD != null) {
-          invalidProductGroupACO.put(ITCL, response.MBMD)
+        if (response.MBMD != null) { //If translation product group and translation contains access control object, return true
+          String accessControlObjectList = response.MBMD
+          if(accessControlObjectList.contains(ACO))
+          {
+            invalidACO = true
+          }
+
         }
     }
+
     miCaller.call("CRS881MI", "GetTranslData", params, callback)
+
+    return invalidACO
   }
 
   /**
@@ -222,14 +228,13 @@ class EXT001 extends ExtendM3Batch {
    * @params
    * @return
    */
-  def getItems() {
+  private void getItems() {
     ExpressionFactory expression = database.getExpressionFactory("MITMAS")
     expression = expression.gt("MMSTAT", lowerStatus).and(expression.lt("MMSTAT", higherStatus))
     DBAction query = database.table("MITMAS").index("00").matching(expression).selection("MMITCL", "MMITNO", "MMACRF").build()
     DBContainer container = query.getContainer()
-    container.set("MMcono", cono)
+    container.set("MMCONO", cono)
     query.readAll(container, 1, maxPageSize, getItems)
-    logger.info("Completed reading records: " + invalidProductGroupACO)
   }
 
   Closure < ? > getItems = {
@@ -238,66 +243,54 @@ class EXT001 extends ExtendM3Batch {
       String accessControlObject = containerResult.getString("MMACRF")
       String itemNumber = containerResult.getString("MMITNO")
       String warehouse = (warehouseForACO.get(accessControlObject)==null)?"":warehouseForACO.get(accessControlObject)
-      boolean invalidItem = false
-      boolean PHCrownProdcutGroup = false
-
-      if (phCrownProductGroup != null && phCrownProductGroup.size() > 0 && phCrownProductGroup.contains(productGroup)) {
-        PHCrownProdcutGroup = true
+      if (phCrownProductGroup.contains(productGroup)) {
         for (int i = 0; i < phCrownWarehouse.size(); i++) {
           boolean itemAvailable = itemAvailableInWarehouse(phCrownWarehouse[i], itemNumber)
           if (itemAvailable) {
             filterItemsAndUploadCrownItems(phCrownWarehouse[i], itemNumber)
           }
         }
-      }
+      }else {
+        boolean invalidItem = false
 
-      def params = ["CONO": cono.toString().trim(), "DIVI": "", "TRQF": "0", "MSTD": "ECOM", "MVRS": "1", "BMSG": "ECOM ATP", "IBOB": "O", "ELMP": "ECOM ATP", "ELMD": "ECOM ATP", "MVXD": "OVRD_WHLO_" + itemNumber]
-      def callback = {
-        Map < String,
-          String > response ->
-          if (response.MBMD != null && warehouse.trim().isEmpty()) {
-            warehouse = response.MBMD
+        //Get Overriding Warehouses if any.
+        def params = ["CONO": cono.toString().trim(), "DIVI": "", "TRQF": "0", "MSTD": "ECOM", "MVRS": "1", "BMSG": "ECOM ATP", "IBOB": "O", "ELMP": "ECOM ATP", "ELMD": "ECOM ATP", "MVXD": "OVRD_WHLO_" + itemNumber]
+        def callback = {
+          Map<String,
+            String> response ->
+            if (response.MBMD != null && warehouse.trim().isEmpty()) {
+              warehouse = response.MBMD
+            }
+        }
+        miCaller.call("CRS881MI", "GetTranslData", params, callback)
+
+        String[] warehouses = warehouse.split(",") //Override warehouses can be multiple
+        for (int i = 0; i < warehouses.length; i++) {
+          //Keep checking for all warehouses until item is valid in at least one warehouse
+          invalidItem = checkIfInvalidItem(itemNumber, warehouse, accessControlObject, productGroup)
+          if (!invalidItem) //If item valid and is present in atleast one warehouse
+          {
+            warehouse = warehouses[i]
+            availableToPromiseRecordsFound = false
+            filterItemsAndUploadQuantity(warehouse, itemNumber)
+            filterItemsAndUploadDate(warehouse, itemNumber)
           }
-      }
-      miCaller.call("CRS881MI", "GetTranslData", params, callback)
-
-      String[] warehouses = warehouse.split(",")
-
-      for (int i = 0; i < warehouses.length && !invalidItem; i++) {
-        invalidItem = checkIfInvalidItem(itemNumber, warehouse, accessControlObject, productGroup)
-      }
-
-      if (!invalidItem && !PHCrownProdcutGroup) {
-        for (int i = 0; i < warehouses.length; i++) //Iterate through all available warehouses.
-        {
-          warehouse = warehouses[i]
-          availableToPromiseRecordsFound = false
-          filterItemsAndUploadQuantity(warehouse, itemNumber)
-          filterItemsAndUploadDate(warehouse, itemNumber)
         }
-      }
-      if (atpQty180 > 0) {
-        int ATPQuantity = atpQty180 + atpQty185
-        String ATPDate = atpDate180
-        if (atpDate185 < atpDate180) {
-          ATPDate = atpDate185
-        }
-        addItemsToATPDateTable(itemNumber, warehouse, ATPQuantity, ATPDate)
+
       }
   }
 
   /**
    * Check Item is valid
-   * @params  itemnumber, warehouse, accessControlObject, product group
+   * @params  item number, warehouse, accessControlObject, product group
    * @return boolean
    */
   private boolean checkIfInvalidItem(String itemNumber, String warehouse, String accessControlObject, String productGroup) {
     boolean invalidItem = false
 
-    if (invalidProductGroupACO != null && invalidProductGroupACO.size() > 0) {
+    if (validAccessControlObjects != null && validAccessControlObjects.size() > 0) {
       //If the Access Control Object of the item is a part of invalid access control object list for the product group, then set as invalid item.
-      String invalidACOList = invalidProductGroupACO.get(productGroup)
-      invalidItem = invalidACOList.contains(accessControlObject)
+      invalidItem = !validAccessControlObjects.contains(accessControlObject)
     }
 
     //If item number contains "." set invalid item
@@ -316,25 +309,24 @@ class EXT001 extends ExtendM3Batch {
     }
     miCaller.call("MMS200MI", "GetItmWhsBasic", params, callback)
 
+    //Get Invalid Access control object for each product group.
+    invalidItem = checkIfACOInvalidForProductGroup(productGroup,accessControlObject)
+
     return invalidItem
   }
 
   /**
-   * Check Item availble in warehouse
+   * Check Item available in warehouse
    * @params warehouse, item
    * @return
    */
   private boolean itemAvailableInWarehouse(String warehouse, String itemNumber) {
     DBAction query = database.table("MITBAL").index("00").selection("MBWHLO").build()
     DBContainer container = query.getContainer()
-    container.set("MBcono", cono)
+    container.set("MBCONO", cono)
     container.set("MBITNO", itemNumber)
     container.set("MBWHLO", warehouse)
-    if (query.read(container)) {
-      return true
-    } else {
-      return false
-    }
+    return query.read(container)
   }
 
   /**
@@ -347,7 +339,7 @@ class EXT001 extends ExtendM3Batch {
     expression = expression.gt("MBSTAT", lowerStatus).and(expression.lt("MBSTAT", higherStatus))
     DBAction query = database.table("MITBAL").index("00").matching(expression).selection("MBSTQT", "MBREQT").build()
     DBContainer container = query.getContainer()
-    container.set("MBcono", cono)
+    container.set("MBCONO", cono)
     container.set("MBITNO", itemNumber)
     container.set("MBWHLO", warehouse)
     if (query.read(container)) {
@@ -361,13 +353,13 @@ class EXT001 extends ExtendM3Batch {
 
   /**
    * Get planning time fence for the item in warehouse
-   * @params ItemNumber and warehouse
-   * @return
+   * @params warehouse and item number
+   * @return Integer
    */
   private Integer getPlanningTimeFence(String warehouse, String itemNumber) {
     DBAction query = database.table("MITBAL").index("00").selection("MBPFTM").build()
     DBContainer container = query.getContainer()
-    container.set("MBcono", cono)
+    container.set("MBCONO", cono)
     container.set("MBITNO", itemNumber)
     container.set("MBWHLO", warehouse)
     if (query.read(container)) {
@@ -395,7 +387,7 @@ class EXT001 extends ExtendM3Batch {
     int quantity = 0
     DBAction query = database.table("MITATP").index("00").selection("MAAVTP").build() //Key fields to MITATP and get available quantity.
     DBContainer container = query.getContainer()
-    container.set("MAcono", cono)
+    container.set("MACONO", cono)
     container.set("MAWHLO", warehouse)
     container.set("MAITNO", itemNumber)
     container.set("MAPLDT", LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd")).toInteger())
@@ -405,20 +397,21 @@ class EXT001 extends ExtendM3Batch {
       if (quantity > 0) {
         addItemsToATPQuantityTable(itemNumber, warehouse, quantity)
       }
+      if (quantity == 0 && (warehouse.trim() == "180" || warehouse.trim() == "185")) //If quantity is 0 and warehouse is 180 or 185, check for other dates as well.
+      {
+        query.readAll(container, 3, maxPageSize, readAvailableToPromiseQuantity)
+      }
     }
-    if (quantity == 0 && (warehouse.trim().equals("180") || warehouse.trim().equals("185"))) //If quantity is 0 and warehouse is 180 or 185, check for other dates as well.
-    {
-      query.readAll(container, 3, maxPageSize, readAvailableToPromiseQuantity)
-    }
+
   }
 
   /**
    * Get Planning Date from M3
-   * @params
-   * @return
+   * @params planning Time Fence
+   * @return String
    */
   private String getPlanningDate(int planningTimeFence) {
-    workingDaySerialNumber = ""
+    workingDaySerialNumber = "0"
     String planningDate = "0"
     def params = ["CONO": cono.toString().trim(), "YMD8": LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"))]
     def callback = {
@@ -426,13 +419,12 @@ class EXT001 extends ExtendM3Batch {
         String > response ->
         workingDaySerialNumber = response.WDNO
         String deliveryDay = response.DDAY
-        if (workingDaySerialNumber == null || workingDaySerialNumber.trim().isEmpty()) workingDaySerialNumber = "0"
         if (deliveryDay == null || deliveryDay.trim().isEmpty()) deliveryDay = "0"
-        if (!deliveryDay.trim().equals("1")) {
+        if (deliveryDay.trim() != "1") {
           def query = database.table("CSYCAL").index("00").selection("CDDDAY", "CDWDNO").build()
           def container = query.getContainer()
-          container.set("CDcono", cono)
-          container.set("CDdivi", divi)
+          container.set("CDCONO", cono)
+          container.set("CDDIVI", divi)
           query.readAll(container, 2, maxPageSize, getSystemCalendarDate)
         }
     }
@@ -458,39 +450,55 @@ class EXT001 extends ExtendM3Batch {
    * @return
    */
   private filterItemsAndUploadDate(String warehouse, String itemNumber) {
+    availableToPromiseRecordsFound = false
     int planningTimeFence = getPlanningTimeFence(warehouse, itemNumber)
-    DBAction query = database.table("MITATP").index("00").selection("MAAVTP", "MAPLDT", "MAAVTP", "MAWHLO", "MAITNO").build()
+    DBAction query = database.table("MITATP").index("00").selection("MAAVTP", "MAPLDT", "MAWHLO", "MAITNO").build()
     DBContainer container = query.getContainer()
-    container.set("MAcono", cono)
+    container.set("MACONO", cono)
     container.set("MAWHLO", warehouse)
     container.set("MAITNO", itemNumber)
 
     String planningDate = getPlanningDate(planningTimeFence)
 
     //Add all valid items to EXTPDT table except for warehouse 180
-    if (!warehouse.trim().equals("185")) {
+    if (warehouse.trim() != "185") {
       int quantity = 1
       query.readAll(container, 3, maxPageSize, readATPDateRecords)
       if (!availableToPromiseRecordsFound) {
         addItemsToATPDateTable(itemNumber, warehouse, quantity, planningDate)
       }
-    } else if (warehouse.trim().equals("180")) {
-      if (!availableToPromiseRecordsFound) {
-        query.readAll(container, 3, maxPageSize, readATPDateRecords_warehouse_180_185)
-      }
-      if (!availableToPromiseRecordsFound) {
-        int quantity = getWarehouseQuantity(warehouse, itemNumber)
-        if (warehouse.trim().equals("180")) {
-          atpQty180 = quantity
-          atpDate180 = Integer.parseInt(planningDate)
-        } else {
-          atpQty185 = quantity
-          atpDate185 = Integer.parseInt(planningDate)
+    } else if (warehouse.trim() == "180") {
+      int count = 2
+      for(int i=0;i<count;i++) // Run twice for warehouse 180 once and warehouse 185 once.
+      {
+        if(i==1) warehouse = "185"
+        if (!availableToPromiseRecordsFound) {
+          query.readAll(container, 3, maxPageSize, readATPDateRecords_warehouse_180_185)
+        }
+        if (!availableToPromiseRecordsFound) {
+          int quantity = getWarehouseQuantity(warehouse, itemNumber)
+          if (warehouse.trim() == "180") {
+            atpQty180 = quantity
+            atpDate180 = Integer.parseInt(planningDate)
+          } else {
+            atpQty185 = quantity
+            atpDate185 = Integer.parseInt(planningDate)
+          }
+        }
+        if (warehouse.trim() == "180") {
+          availableToPromiseRecordsFound = false
+          warehouse = "185"
+        }else
+        {
+          warehouse=""
         }
       }
-      if (warehouse.trim().equals("180")) {
-        availableToPromiseRecordsFound = false
+      int ATPQuantity = atpQty180 + atpQty185
+      String ATPDate = atpDate180
+      if (atpDate185 < atpDate180) {
+        ATPDate = atpDate185
       }
+      addItemsToATPDateTable(itemNumber, "180", ATPQuantity, ATPDate)
     }
   }
   /**
@@ -505,7 +513,7 @@ class EXT001 extends ExtendM3Batch {
     query.set("EXITNO", itemNumber)
     query.set("EXDATE", planningDate.substring(0, 4) + "-" + planningDate.substring(4, 6) + "-" + planningDate.substring(6, 8) + " 00:00:00")
     query.set("EXUPDS", "1")
-    query.set("EXcono", cono)
+    query.set("EXCONO", cono)
     query.set("EXORQ9", quantity)
     query.set("EXRGDT", LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd")).toInteger())
     query.set("EXRGTM", LocalDateTime.now().format(DateTimeFormatter.ofPattern("HHmmss")).toInteger())
@@ -559,12 +567,11 @@ class EXT001 extends ExtendM3Batch {
     DBContainer containerResult ->
 
       int quantity = containerResult.getInt("MAPQTY")
-      String itemNumber = containerResult.getString("MAITNO")
       String warehouse = containerResult.getString("MAWHLO")
       int planningDate = containerResult.getInt("MAPLDT")
 
       if (quantity > 0 && planningDate > 0) {
-        if (warehouse.trim().equals("180")) {
+        if (warehouse.trim() == "180") {
           atpQty180 = containerResult.getInt("MAAVTP")
           atpDate180 = containerResult.getInt("MAPLDT")
           availableToPromiseRecordsFound = true
@@ -574,31 +581,27 @@ class EXT001 extends ExtendM3Batch {
           availableToPromiseRecordsFound = true
         }
       }
-      if (warehouse.trim().equals("180")) {
+      if (warehouse.trim() == "180") {
         atpWarehouse = "185"
         availableToPromiseRecordsFound = false
       }
-
-      //  addItemsToATPDateTable(itemNumber,warehouse,quantity,planningDate+"")
 
   }
   Closure < ? > getSystemCalendarDate = {
     DBContainer containerResult ->
       String deliveryDate = containerResult.getString("CDDDAY")
       if (deliveryDate == null || deliveryDate.trim().isEmpty()) deliveryDate = ""
-      if (deliveryDate.trim().equals("1")) {
+      if (deliveryDate.trim() == "1") {
         workingDaySerialNumber = containerResult.getString("CDWDNO")
         return
       }
   }
   Closure < ? > deleteAllATPDateRecords = {
     LockedResult lockedResult ->
-      logger.info("Deleted EXT200 records successfully")
       lockedResult.delete()
   }
   Closure < ? > deleteAllATPQuantityRecords = {
     LockedResult lockedResult ->
-      logger.info("Deleted EXT201 records successfully")
       lockedResult.delete()
   }
 
